@@ -1,0 +1,107 @@
+spring:
+  application:
+    name: emailagent
+
+  datasource:
+    # =====================
+    # PostgreSQL 연결 설정
+    # =====================
+    # 로컬 개발 기본값.
+    # - 운영에서는 .yml에 값을 박지 말고 Env/Secret Manager로 주입하는 것을 권장
+    # - pgvector를 사용하려면 DB에 `CREATE EXTENSION vector;` 권한이 있어야 함
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:emailagent}
+    username: ${DB_USER:postgres}
+    password: ${DB_PASSWORD:postgres}
+    driver-class-name: org.postgresql.Driver
+
+  jpa:
+    # Open Session In View 패턴은 웹 요청 범위를 넘어 Lazy 로딩을 허용해 예기치 않은 쿼리를 만들 수 있어 off.
+    open-in-view: false
+    hibernate:
+      # ddl-auto를 validate로 둔 이유:
+      # - 스키마 변경은 Flyway로만 관리 (운영 안전)
+      # - 엔티티/DB 불일치가 있으면 앱 기동 시 바로 실패하게 해서 조기 발견
+      ddl-auto: validate
+    properties:
+      hibernate:
+        format_sql: true
+        # 개발 시 SQL을 보고 싶으면 true로
+        # show_sql: true
+
+  flyway:
+    # =====================
+    # DB 마이그레이션
+    # =====================
+    enabled: true
+    locations: classpath:db/migration
+
+  ai:
+    # =====================
+    # Spring AI 설정 가이드
+    # =====================
+    # 아래는 "가이드/템플릿" 형태입니다.
+    # - 실제로는 OpenAI 또는 Anthropic 중 하나만 켜도 되고,
+    # - 키는 반드시 환경변수로 주입하세요.
+
+    # 1) OpenAI
+    openai:
+      api-key: ${OPENAI_API_KEY:}
+      # chat:
+      #   options:
+      #     model: gpt-4o-mini
+      # embedding:
+      #   options:
+      #     model: text-embedding-3-small
+
+    # 2) Claude (Anthropic)
+    anthropic:
+      api-key: ${ANTHROPIC_API_KEY:}
+      # chat:
+      #   options:
+      #     model: claude-3-5-sonnet-latest
+
+    # 3) VectorStore (pgvector)
+    vectorstore:
+      pgvector:
+        # Spring AI가 런타임에 테이블을 자동 생성할지 여부
+        # - true: 빠르게 실험할 때만 추천 (운영에서 스키마 drift 위험)
+        # - false: Flyway로 테이블/인덱스를 관리 (권장)
+        initialize-schema: false
+
+        # table-name
+        # - Spring AI pgvector store가 사용할 테이블 명
+        # - 우리 엔티티(email_history)와 동일한 이름을 쓰고 있지만,
+        #   실제로 Spring AI가 요구하는 스키마(컬럼 구조)가 다를 수 있어 추후 정합성 점검 필요
+        table-name: email_history
+
+        # dimensions
+        # - 임베딩 모델의 차원 수와 반드시一致 해야 합니다.
+        # - 예: OpenAI text-embedding-3-small = 1536
+        dimensions: 1536
+
+        # distance-type 예시: cosine / l2 / inner_product
+        # distance-type: cosine
+
+# =====================
+# Gmail OAuth + Phase 4 flags
+# =====================
+# gmail.enabled=true 로 두면 GmailApiClient(실제 Google SDK 호출)가 활성화됩니다.
+# - 아직 OAuth 구현이 없으면 NoopGmailAuthProvider가 예외를 던지므로,
+#   개발 초기에는 false로 두는 것을 권장합니다.
+#
+# oauth.* 값들은 다음 Phase에서 실제 OAuth 구현체(GmailAuthProvider)에서 사용합니다.
+gmail:
+  enabled: ${GMAIL_ENABLED:false}
+  oauth:
+    client-id: ${GMAIL_CLIENT_ID:}
+    client-secret: ${GMAIL_CLIENT_SECRET:}
+    redirect-uri: ${GMAIL_REDIRECT_URI:}
+    refresh-token: ${GMAIL_REFRESH_TOKEN:}
+
+# =====================
+# Phase 4: Scheduler
+# =====================
+emailagent:
+  scheduler:
+    # 1시간 = 3,600,000ms
+    fixed-delay-ms: ${EMAILAGENT_SCHEDULER_FIXED_DELAY_MS:3600000}
