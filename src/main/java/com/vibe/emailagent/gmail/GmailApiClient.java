@@ -1,7 +1,8 @@
 package com.vibe.emailagent.gmail;
 
-import java.io.IOException;
+import java.time.Instant;
 import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import java.util.Collections;
 import java.util.List;
 
@@ -11,6 +12,8 @@ import com.google.api.client.json.gson.GsonFactory;
 import com.google.api.services.gmail.Gmail;
 import com.google.api.services.gmail.model.Draft;
 import com.google.api.services.gmail.model.ListMessagesResponse;
+import com.google.api.services.gmail.model.Message;
+import com.google.api.services.gmail.model.MessagePartHeader;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -50,38 +53,78 @@ public class GmailApiClient implements GmailClient {
 
     @Override
     public List<GmailMessageSummary> findUnrepliedMessagesSince(OffsetDateTime since) {
-        // TODO(Phase 다음 단계): Gmail search query를 적절히 구성해야 합니다.
-        // 예시: newer_than:1h -from:me -in:chats
-        // 또한 "답장하지 않음" 판단은 label/reply 여부를 어떻게 정의할지 정책 필요.
         try {
             Gmail gmail = gmail();
 
-            // Skeleton: 메시지 ID 목록만 가져오는 형태
-            String query = "newer_than:1h -from:me";
+            // Gmail query를 "그냥 최근에 받은 메일"이 나오도록 최대한 단순화합니다.
+            // - in:inbox  : 받은 편지함
+            // - -from:me  : 내가 보낸 메일 제외
+            //
+            // NOTE:
+            // - Gmail search query는 기본적으로 최신 메일이 먼저 옵니다.
+            // - since 파라미터를 아직 query에 반영하지 않습니다(테스트 목적). 필요하면 after:epochSeconds로 확장하세요.
+            String query = "in:inbox -from:me";
+
             ListMessagesResponse response = gmail.users().messages().list(USER_ID)
                     .setQ(query)
+                    .setMaxResults(5L)
                     .execute();
 
+            if (log.isDebugEnabled()) {
+                log.debug("Gmail list: query='{}', estimateResultSize={}, nextPageToken={}",
+                        query, response.getResultSizeEstimate(), response.getNextPageToken());
+            }
+
             if (response.getMessages() == null || response.getMessages().isEmpty()) {
+                log.warn("No messages found for query: {}", query);
                 return Collections.emptyList();
             }
 
-            // Phase 4에서는 message 상세조회(get)까지는 생략하고, 최소 데이터만 placeholder로 반환
+            // messages.get을 호출해 subject/from/snippet/receivedAt을 채웁니다.
             return response.getMessages().stream()
-                    .map(m -> new GmailMessageSummary(
-                            m.getId(),
-                            m.getThreadId(),
-                            "", // subject: 다음 단계에서 messages.get + headers 파싱 필요
-                            "", // from:    다음 단계에서 필요
-                            "", // snippet: 다음 단계에서 messages.get.snippet 활용
-                            OffsetDateTime.now() // receivedAt: 다음 단계에서 internalDate 파싱
-                    ))
+                    .map(m -> {
+                        try {
+                            Message full = gmail.users().messages().get(USER_ID, m.getId())
+                                    .setFormat("metadata")
+                                    .setMetadataHeaders(List.of("Subject", "From"))
+                                    .execute();
+
+                            String subject = headerValue(full.getPayload() != null ? full.getPayload().getHeaders() : null, "Subject");
+                            String from = headerValue(full.getPayload() != null ? full.getPayload().getHeaders() : null, "From");
+                            String snippet = full.getSnippet() != null ? full.getSnippet() : "";
+
+                            OffsetDateTime receivedAt = OffsetDateTime.now();
+                            if (full.getInternalDate() != null) {
+                                receivedAt = OffsetDateTime.ofInstant(Instant.ofEpochMilli(full.getInternalDate()), ZoneOffset.UTC);
+                            }
+
+                            return new GmailMessageSummary(
+                                    full.getId(),
+                                    full.getThreadId(),
+                                    subject,
+                                    from,
+                                    snippet,
+                                    receivedAt
+                            );
+                        } catch (Exception e) {
+                            log.warn("Failed to fetch message details for id={}: {}", m.getId(), e.getMessage());
+                            return new GmailMessageSummary(m.getId(), m.getThreadId(), "", "", "", OffsetDateTime.now());
+                        }
+                    })
                     .toList();
         } catch (Exception e) {
-            // 운영에서는 재시도/알림/서킷브레이커 등을 고려
-            log.warn("Failed to query Gmail messages (skeleton): {}", e.getMessage(), e);
+            log.warn("Failed to query Gmail messages: {}", e.getMessage(), e);
             return Collections.emptyList();
         }
+    }
+
+    private static String headerValue(List<MessagePartHeader> headers, String name) {
+        if (headers == null) return "";
+        return headers.stream()
+                .filter(h -> name.equalsIgnoreCase(h.getName()))
+                .map(MessagePartHeader::getValue)
+                .findFirst()
+                .orElse("");
     }
 
     @Override
@@ -111,4 +154,3 @@ public class GmailApiClient implements GmailClient {
                 .build();
     }
 }
-

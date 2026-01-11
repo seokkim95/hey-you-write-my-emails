@@ -5,6 +5,7 @@ import java.util.stream.Collectors;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.messages.SystemMessage;
 import org.springframework.ai.chat.messages.UserMessage;
+import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -28,6 +29,7 @@ import org.springframework.transaction.annotation.Transactional;
  *    - 다음 Phase에서 Gmail Drafts API에 맞춰 MIME raw 생성/저장 로직을 붙입니다.
  */
 @Service
+@Profile("!gmail-test")
 public class EmailAgentService {
 
     private final EmailContextService emailContextService;

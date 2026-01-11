@@ -36,3 +36,8 @@ build/
 *local.properties
 *local.yml
 .mvn/*
+*credentials.json
+
+# Explicit secrets (defense-in-depth)
+src/main/resources/google/credentials.json
+src/main/resources/google/tokens/**

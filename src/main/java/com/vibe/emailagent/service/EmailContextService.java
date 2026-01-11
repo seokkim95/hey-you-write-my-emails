@@ -4,6 +4,7 @@ import java.util.Collections;
 import java.util.List;
 
 import org.springframework.ai.vectorstore.VectorStore;
+import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -25,6 +26,7 @@ import com.vibe.emailagent.repository.EmailHistoryRepository;
  * - (3) 최신 비즈니스 규칙을 항상 포함하여 "과거 히스토리와 충돌" 시 최신 규칙을 우선
  */
 @Service
+@Profile("!gmail-test")
 public class EmailContextService {
 
     private final EmailHistoryRepository emailHistoryRepository;

@@ -14,6 +14,7 @@ import org.springframework.context.annotation.Configuration;
  * - 다중 모델(OpenAI + Anthropic) 라우팅 전략을 Bean으로 두고 싶을 때
  * - VectorStore 검색 파라미터(topK, filter) 전략을 공통화하고 싶을 때
  */
+// (No functional changes; this file can be profiled later if needed.)
 @Configuration
 public class AiConfig {
     // Intentionally empty

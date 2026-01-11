@@ -2,6 +2,10 @@ spring:
   application:
     name: emailagent
 
+  main:
+    # This project is intended to run as a one-off batch job (no embedded web server).
+    web-application-type: none
+
   datasource:
     # =====================
     # PostgreSQL 연결 설정
@@ -84,12 +88,16 @@ spring:
 
 # =====================
 # Gmail OAuth + Phase 4 flags
-# =====================
-# gmail.enabled=true 로 두면 GmailApiClient(실제 Google SDK 호출)가 활성화됩니다.
-# - 아직 OAuth 구현이 없으면 NoopGmailAuthProvider가 예외를 던지므로,
-#   개발 초기에는 false로 두는 것을 권장합니다.
 #
-# oauth.* 값들은 다음 Phase에서 실제 OAuth 구현체(GmailAuthProvider)에서 사용합니다.
+# 참고: 이 프로젝트에는 Google Cloud Console에서 받은 OAuth Client JSON을
+# `src/main/resources/google/credentials.json` 형태로 둘 수 있습니다.
+# - (중요) 이 파일에는 client_secret이 포함될 수 있으니 절대 git에 커밋하지 마세요.
+# - .gitignore에 이미 ignore 규칙이 들어가 있어야 합니다.
+#
+# redirect-uri는 "어떤 방식으로 refresh token을 발급받는지"에 따라 달라집니다.
+# - 웹 콜백 서버를 운영하면: https://your-domain.com/oauth2/callback
+# - 로컬에서 발급할 때는 툴/구현에 따라 localhost callback 또는 loopback을 사용
+# 이 프로젝트에서는 실제 OAuth 구현(GmailAuthProvider)에서 이 값을 사용/무시할 수 있습니다.
 gmail:
   enabled: ${GMAIL_ENABLED:false}
   oauth:
@@ -99,9 +107,24 @@ gmail:
     refresh-token: ${GMAIL_REFRESH_TOKEN:}
 
 # =====================
-# Phase 4: Scheduler
+# 실행 모드 선택 (Profiles)
 # =====================
+# 이 프로젝트는 내부 @Scheduled 대신 "1회 실행" 배치 형태를 사용합니다.
+# - 기본(default): write 기반 드래프트 생성 모드(EmailAutomationRunner)
+# - ingest 프로파일: 초기 데이터 적재 모드(InitialIngestionRunner)
+#
+# 실행 예시:
+# 1) 기본 모드(아무것도 지정하지 않음)
+#    ./mvnw spring-boot:run
+#    또는 java -jar app.jar
+#
+# 2) ingest 모드
+#    ./mvnw spring-boot:run -Dspring-boot.run.profiles=ingest
+#    또는 java -jar app.jar --spring.profiles.active=ingest
+#
+# AWS EventBridge에서는 위 실행 커맨드를 "주기 실행"하도록 등록하면 됩니다.
+
 emailagent:
-  scheduler:
-    # 1시간 = 3,600,000ms
-    fixed-delay-ms: ${EMAILAGENT_SCHEDULER_FIXED_DELAY_MS:3600000}
+  runner:
+    # 기본 모드에서 "최근 N시간" 범위를 처리할 때 사용 (현재 skeleton에서는 1시간)
+    lookback-hours: ${EMAILAGENT_LOOKBACK_HOURS:1}
