@@ -8,58 +8,57 @@ spring:
 
   datasource:
     # =====================
-    # PostgreSQL 연결 설정
+    # PostgreSQL connection
     # =====================
-    # 로컬 개발 기본값.
-    # - 운영에서는 .yml에 값을 박지 말고 Env/Secret Manager로 주입하는 것을 권장
-    # - pgvector를 사용하려면 DB에 `CREATE EXTENSION vector;` 권한이 있어야 함
+    # Local defaults.
+    # - In production, inject via env/secret manager instead of hardcoding
+    # - pgvector requires `CREATE EXTENSION vector;` permission
     url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:emailagent}
     username: ${DB_USER:postgres}
     password: ${DB_PASSWORD:postgres}
     driver-class-name: org.postgresql.Driver
 
   jpa:
-    # Open Session In View 패턴은 웹 요청 범위를 넘어 Lazy 로딩을 허용해 예기치 않은 쿼리를 만들 수 있어 off.
+    # Disable Open Session In View to avoid unexpected lazy-loading queries.
     open-in-view: false
     hibernate:
-      # ddl-auto를 validate로 둔 이유:
-      # - 스키마 변경은 Flyway로만 관리 (운영 안전)
-      # - 엔티티/DB 불일치가 있으면 앱 기동 시 바로 실패하게 해서 조기 발견
+      # Use validate because schema changes should be managed by Flyway.
+      # Fails fast if entity mappings differ from DB schema.
       ddl-auto: validate
     properties:
       hibernate:
         format_sql: true
-        # 개발 시 SQL을 보고 싶으면 true로
         # show_sql: true
 
   flyway:
     # =====================
-    # DB 마이그레이션
+    # DB migration
     # =====================
     enabled: true
     locations: classpath:db/migration
 
   ai:
     # =====================
-    # Spring AI 설정 가이드
+    # Spring AI configuration guide
     # =====================
-    # 아래는 "가이드/템플릿" 형태입니다.
-    # - 실제로는 OpenAI 또는 Anthropic 중 하나만 켜도 되고,
-    # - 키는 반드시 환경변수로 주입하세요.
+    # This section is a template.
+    # - In practice you usually enable either OpenAI or Anthropic.
+    # - Always inject API keys via environment variables.
 
     # 1) OpenAI
     openai:
       api-key: ${OPENAI_API_KEY:}
+      embedding:
+        options:
+          model: text-embedding-3-large
       # chat:
       #   options:
       #     model: gpt-4o-mini
-      # embedding:
-      #   options:
-      #     model: text-embedding-3-small
 
-    # 2) Claude (Anthropic)
-    anthropic:
-      api-key: ${ANTHROPIC_API_KEY:}
+
+    # 2) Claude (Anthropic) - Will be used later if I decide to use anthropic models to generate email content.
+#    anthropic:
+#      api-key: ${ANTHROPIC_API_KEY:}
       # chat:
       #   options:
       #     model: claude-3-5-sonnet-latest
@@ -67,64 +66,45 @@ spring:
     # 3) VectorStore (pgvector)
     vectorstore:
       pgvector:
-        # Spring AI가 런타임에 테이블을 자동 생성할지 여부
-        # - true: 빠르게 실험할 때만 추천 (운영에서 스키마 drift 위험)
-        # - false: Flyway로 테이블/인덱스를 관리 (권장)
+        # Whether to auto-create schema at runtime
+        # - true: good for quick experiments
+        # - false: recommended (manage schema with Flyway)
         initialize-schema: false
 
-        # table-name
-        # - Spring AI pgvector store가 사용할 테이블 명
-        # - 우리 엔티티(email_history)와 동일한 이름을 쓰고 있지만,
-        #   실제로 Spring AI가 요구하는 스키마(컬럼 구조)가 다를 수 있어 추후 정합성 점검 필요
-        table-name: email_history
+        # Table used by Spring AI pgvector VectorStore
+        table-name: email_embeddings
 
-        # dimensions
-        # - 임베딩 모델의 차원 수와 반드시一致 해야 합니다.
-        # - 예: OpenAI text-embedding-3-small = 1536
+        # Must match your embedding model dimension (e.g., 1536)
         dimensions: 1536
 
-        # distance-type 예시: cosine / l2 / inner_product
+        # distance-type examples: cosine / l2 / inner_product
         # distance-type: cosine
 
-# =====================
-# Gmail OAuth + Phase 4 flags
-#
-# 참고: 이 프로젝트에는 Google Cloud Console에서 받은 OAuth Client JSON을
-# `src/main/resources/google/credentials.json` 형태로 둘 수 있습니다.
-# - (중요) 이 파일에는 client_secret이 포함될 수 있으니 절대 git에 커밋하지 마세요.
-# - .gitignore에 이미 ignore 규칙이 들어가 있어야 합니다.
-#
-# redirect-uri는 "어떤 방식으로 refresh token을 발급받는지"에 따라 달라집니다.
-# - 웹 콜백 서버를 운영하면: https://your-domain.com/oauth2/callback
-# - 로컬에서 발급할 때는 툴/구현에 따라 localhost callback 또는 loopback을 사용
-# 이 프로젝트에서는 실제 OAuth 구현(GmailAuthProvider)에서 이 값을 사용/무시할 수 있습니다.
 gmail:
-  enabled: ${GMAIL_ENABLED:false}
+  enabled: ${GMAIL_ENABLED:true}
   oauth:
     client-id: ${GMAIL_CLIENT_ID:}
     client-secret: ${GMAIL_CLIENT_SECRET:}
     redirect-uri: ${GMAIL_REDIRECT_URI:}
     refresh-token: ${GMAIL_REFRESH_TOKEN:}
 
-# =====================
-# 실행 모드 선택 (Profiles)
-# =====================
-# 이 프로젝트는 내부 @Scheduled 대신 "1회 실행" 배치 형태를 사용합니다.
-# - 기본(default): write 기반 드래프트 생성 모드(EmailAutomationRunner)
-# - ingest 프로파일: 초기 데이터 적재 모드(InitialIngestionRunner)
-#
-# 실행 예시:
-# 1) 기본 모드(아무것도 지정하지 않음)
-#    ./mvnw spring-boot:run
-#    또는 java -jar app.jar
-#
-# 2) ingest 모드
-#    ./mvnw spring-boot:run -Dspring-boot.run.profiles=ingest
-#    또는 java -jar app.jar --spring.profiles.active=ingest
-#
-# AWS EventBridge에서는 위 실행 커맨드를 "주기 실행"하도록 등록하면 됩니다.
-
 emailagent:
   runner:
-    # 기본 모드에서 "최근 N시간" 범위를 처리할 때 사용 (현재 skeleton에서는 1시간)
+    # Lookback window (hours) used in default mode.
     lookback-hours: ${EMAILAGENT_LOOKBACK_HOURS:1}
+
+  ingestion:
+    # <= 0 means "ingest all" (in practice: all in inbox)
+    lookback-hours: ${EMAILAGENT_INGESTION_LOOKBACK_HOURS:0}
+
+    # Safety limit: max messages to process per run
+    max-messages: ${EMAILAGENT_INGESTION_MAX_MESSAGES:1000}
+
+    # Gmail API list page size
+    page-size: ${EMAILAGENT_INGESTION_PAGE_SIZE:20}
+
+    # Chunking (to avoid embedding token limits)
+    # - chunk-size: max characters per document chunk
+    # - chunk-overlap: overlap between chunks
+    chunk-size: ${EMAILAGENT_INGESTION_CHUNK_SIZE:4000}
+    chunk-overlap: ${EMAILAGENT_INGESTION_CHUNK_OVERLAP:200}

@@ -9,7 +9,6 @@ import org.mockito.Mockito;
 import org.springframework.ai.chat.client.ChatClient;
 
 import com.vibe.emailagent.domain.BusinessRule;
-import com.vibe.emailagent.domain.EmailHistory;
 
 /**
  * Phase 3 최소 단위 테스트 (프롬프트 구성 검증용).
@@ -33,8 +32,8 @@ class EmailAgentServicePromptTest {
         EmailContext ctx = new EmailContext(
                 "t-1",
                 "가격이 얼마인가요?",
-                List.of(new EmailHistory("t-1", "snip", "이전 스레드 톤", null)),
-                List.of(new EmailHistory("", null, "유사 히스토리 예시", null)),
+                List.of(),
+                List.of(),
                 List.of(new BusinessRule("pricing.current", "2026년부터 10% 인상"))
         );
 

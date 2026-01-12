@@ -1,9 +1,10 @@
 package com.vibe.emailagent.gmail;
 
+import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
-import java.util.Collections;
+import java.util.Base64;
 import java.util.List;
 
 import com.google.api.client.googleapis.javanet.GoogleNetHttpTransport;
@@ -13,75 +14,77 @@ import com.google.api.services.gmail.Gmail;
 import com.google.api.services.gmail.model.Draft;
 import com.google.api.services.gmail.model.ListMessagesResponse;
 import com.google.api.services.gmail.model.Message;
+import com.google.api.services.gmail.model.MessagePart;
+import com.google.api.services.gmail.model.MessagePartBody;
 import com.google.api.services.gmail.model.MessagePartHeader;
+import jakarta.annotation.PostConstruct;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
 /**
- * Gmail API 기반 GmailClient 구현체 (뼈대).
+ * GmailClient implementation backed by the official Gmail API (Google SDK).
  *
- * Phase 4에서는 "구글 API 인증 부분은 인터페이스로 추상화"가 요구사항이므로,
- * 실제 동작에 필요한 OAuth 구현은 GmailAuthProvider가 담당하도록 분리했습니다.
+ * Design notes
+ * - OAuth is abstracted behind {@link GmailAuthProvider}.
+ * - This class is the single place where we call the Google Gmail SDK.
  *
- * 이 클래스가 제공하는 것
- * - Google Gmail SDK 호출 위치를 한 군데로 모아둔 skeleton
- * - users.messages.list / users.drafts.create 호출 자리
- *
- * 주의
- * - findUnrepliedMessagesSince()는 현재 skeleton이며, 실제 query/필터링/원문 fetch는 다음 단계에서 필요
- * - createReplyDraft()도 MIME 메시지 생성(raw base64url)까지는 구현하지 않고, 호출 형태만 보여줍니다.
+ * Current status (scaffolding)
+ * - Draft creation is still a skeleton (MIME raw generation is not implemented yet).
  */
 @Component
-@ConditionalOnProperty(prefix = "gmail", name = "enabled", havingValue = "true", matchIfMissing = false)
+@ConditionalOnProperty(prefix = "gmail", name = "enabled", havingValue = "true")
 public class GmailApiClient implements GmailClient {
 
     private static final Logger log = LoggerFactory.getLogger(GmailApiClient.class);
 
     /**
-     * Gmail API에서 사용하는 사용자 식별자.
-     * - 'me'는 인증된 사용자 본인을 의미합니다.
+     * Gmail API user id.
+     * - "me" means the currently authenticated user.
      */
     private static final String USER_ID = "me";
 
     private final GmailAuthProvider authProvider;
+    private Gmail gmail;
 
     public GmailApiClient(GmailAuthProvider authProvider) {
         this.authProvider = authProvider;
     }
 
+    @PostConstruct
+    private void init() {
+        try {
+            this.gmail = gmail();
+            log.info("GmailApiClient initialized successfully.");
+        } catch (Exception e) {
+            log.error("Failed to initialize GmailApiClient: {}", e.getMessage(), e);
+            throw new IllegalStateException("Failed to initialize GmailApiClient", e);
+        }
+    }
+
     @Override
     public List<GmailMessageSummary> findUnrepliedMessagesSince(OffsetDateTime since) {
-        try {
-            Gmail gmail = gmail();
+        // Compatibility method used by earlier phases/tests; implemented via listMessages.
+        return listMessages("in:inbox -from:me", 5, null).messages();
+    }
 
-            // Gmail query를 "그냥 최근에 받은 메일"이 나오도록 최대한 단순화합니다.
-            // - in:inbox  : 받은 편지함
-            // - -from:me  : 내가 보낸 메일 제외
-            //
-            // NOTE:
-            // - Gmail search query는 기본적으로 최신 메일이 먼저 옵니다.
-            // - since 파라미터를 아직 query에 반영하지 않습니다(테스트 목적). 필요하면 after:epochSeconds로 확장하세요.
-            String query = "in:inbox -from:me";
+    @Override
+    public GmailMessagePage listMessages(String query, long maxResults, String pageToken) {
+        try {
+
 
             ListMessagesResponse response = gmail.users().messages().list(USER_ID)
                     .setQ(query)
-                    .setMaxResults(5L)
+                    .setMaxResults(maxResults)
+                    .setPageToken(pageToken)
                     .execute();
 
-            if (log.isDebugEnabled()) {
-                log.debug("Gmail list: query='{}', estimateResultSize={}, nextPageToken={}",
-                        query, response.getResultSizeEstimate(), response.getNextPageToken());
-            }
-
             if (response.getMessages() == null || response.getMessages().isEmpty()) {
-                log.warn("No messages found for query: {}", query);
-                return Collections.emptyList();
+                return new GmailMessagePage(List.of(), null);
             }
 
-            // messages.get을 호출해 subject/from/snippet/receivedAt을 채웁니다.
-            return response.getMessages().stream()
+            List<GmailMessageSummary> summaries = response.getMessages().stream()
                     .map(m -> {
                         try {
                             Message full = gmail.users().messages().get(USER_ID, m.getId())
@@ -98,23 +101,71 @@ public class GmailApiClient implements GmailClient {
                                 receivedAt = OffsetDateTime.ofInstant(Instant.ofEpochMilli(full.getInternalDate()), ZoneOffset.UTC);
                             }
 
-                            return new GmailMessageSummary(
-                                    full.getId(),
-                                    full.getThreadId(),
-                                    subject,
-                                    from,
-                                    snippet,
-                                    receivedAt
-                            );
+                            return new GmailMessageSummary(full.getId(), full.getThreadId(), subject, from, snippet, receivedAt);
                         } catch (Exception e) {
-                            log.warn("Failed to fetch message details for id={}: {}", m.getId(), e.getMessage());
+                            log.warn("Failed to fetch metadata for messageId={}: {}", m.getId(), e.getMessage());
                             return new GmailMessageSummary(m.getId(), m.getThreadId(), "", "", "", OffsetDateTime.now());
                         }
                     })
                     .toList();
+
+            return new GmailMessagePage(summaries, response.getNextPageToken());
         } catch (Exception e) {
-            log.warn("Failed to query Gmail messages: {}", e.getMessage(), e);
-            return Collections.emptyList();
+            throw new IllegalStateException("Failed to list Gmail messages", e);
+        }
+    }
+
+    @Override
+    public GmailMessageContent fetchMessageContent(String messageId) {
+        try {
+
+            Message full = gmail.users().messages().get(USER_ID, messageId)
+                    .setFormat("full")
+                    .execute();
+
+            String subject = headerValue(full.getPayload() != null ? full.getPayload().getHeaders() : null, "Subject");
+            String from = headerValue(full.getPayload() != null ? full.getPayload().getHeaders() : null, "From");
+
+            OffsetDateTime receivedAt = null;
+            if (full.getInternalDate() != null) {
+                receivedAt = OffsetDateTime.ofInstant(Instant.ofEpochMilli(full.getInternalDate()), ZoneOffset.UTC);
+            }
+
+            String snippet = full.getSnippet() != null ? full.getSnippet() : "";
+            String body = extractPlainText(full.getPayload());
+
+            return new GmailMessageContent(full.getId(), full.getThreadId(), subject, from, receivedAt, snippet, body);
+        } catch (Exception e) {
+            throw new IllegalStateException("Failed to fetch Gmail message content for id=" + messageId, e);
+        }
+    }
+
+    private static String extractPlainText(MessagePart part) {
+        if (part == null) return "";
+
+        if ("text/plain".equalsIgnoreCase(part.getMimeType())) {
+            return decodeBody(part.getBody());
+        }
+
+        if (part.getParts() != null) {
+            for (MessagePart p : part.getParts()) {
+                String text = extractPlainText(p);
+                if (!text.isBlank()) {
+                    return text;
+                }
+            }
+        }
+
+        return decodeBody(part.getBody());
+    }
+
+    private static String decodeBody(MessagePartBody body) {
+        if (body == null || body.getData() == null) return "";
+        try {
+            byte[] decoded = Base64.getUrlDecoder().decode(body.getData());
+            return new String(decoded, StandardCharsets.UTF_8);
+        } catch (Exception e) {
+            return "";
         }
     }
 
@@ -129,16 +180,10 @@ public class GmailApiClient implements GmailClient {
 
     @Override
     public String createReplyDraft(String messageId, String threadId, String subject, String draftBody) {
-        // TODO(Phase 다음 단계): Gmail Draft 생성은 RFC822 MIME 메시지를 만들어 base64url로 넣어야 합니다.
-        // - to/from, subject, In-Reply-To, References, threadId 등 헤더 구성 필요
-        // - Gmail users.drafts.create에 Draft.message.raw를 세팅
         try {
             Gmail gmail = gmail();
-
-            // Skeleton: 실제로는 Draft에 Message(raw)를 채워야 합니다.
             Draft draft = new Draft();
             Draft created = gmail.users().drafts().create(USER_ID, draft).execute();
-
             return created.getId();
         } catch (Exception e) {
             log.warn("Failed to create Gmail draft (skeleton): {}", e.getMessage(), e);
@@ -147,7 +192,6 @@ public class GmailApiClient implements GmailClient {
     }
 
     private Gmail gmail() throws Exception {
-        // Google API 클라이언트 구성
         NetHttpTransport transport = GoogleNetHttpTransport.newTrustedTransport();
         return new Gmail.Builder(transport, GsonFactory.getDefaultInstance(), authProvider.requestInitializer())
                 .setApplicationName("emailagent")

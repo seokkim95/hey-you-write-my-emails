@@ -20,22 +20,22 @@ import com.vibe.emailagent.service.EmailAgentService;
 import com.vibe.emailagent.service.EmailDraft;
 
 /**
- * 기본 모드(default profile): "write"로 표시된 초안 후보들을 찾아 RAG 기반 답장 Draft를 생성하는 1회성 러너.
+ * Default automation mode (one-off runner).
  *
- * 요구사항 해석
- * - AWS EventBridge 등 외부 스케줄러가 이 애플리케이션을 "주기적으로 실행"한다.
- * - 따라서 앱 내부에서는 @Scheduled 로 계속 돌기보다는, 실행되면 한번 처리하고 종료하는 방식이 적합.
+ * Target behavior
+ * - The app is executed periodically by an external scheduler (e.g., AWS EventBridge).
+ * - Therefore, we run once and exit instead of using @Scheduled.
  *
- * 현재 Phase(boilerplate)
- * - 아직 Gmail API에서 "write" Draft/Label 기반 조회 기능을 구현하지 않았습니다.
- * - 그래서 임시로 기존 API(findUnrepliedMessagesSince)를 재사용합니다.
+ * Current implementation (boilerplate)
+ * - The final "write"-draft based candidate selection is not implemented yet.
+ * - For now we reuse GmailClient.findUnrepliedMessagesSince(...) as a placeholder.
  *
- * 다음 단계에서 할 일
- * - GmailClient에 findWriteDraftCandidates() 같은 메서드를 추가하고
- * - Gmail에서 "write"로 표시된 draft/라벨만 가져오도록 구현을 교체하세요.
+ * Next steps
+ * - Add something like GmailClient.findWriteDraftCandidates().
+ * - Implement a Gmail query that finds drafts/messages you marked as "write".
  */
 @Component
-@Profile("!ingest & !gmail-test")
+@Profile("automation")
 @ConditionalOnProperty(prefix = "emailagent.runner", name = "enabled", havingValue = "true", matchIfMissing = true)
 public class EmailAutomationRunner implements ApplicationRunner {
 
@@ -74,7 +74,7 @@ public class EmailAutomationRunner implements ApplicationRunner {
 
             for (GmailMessageSummary msg : candidates) {
                 try {
-                    // Phase 4-> 변경 예정: currentQuestion을 snippet으로 임시 대체
+                    // TODO: Phase 4+ - For now we use snippet as a placeholder for the user's question
                     String currentQuestion = msg.snippet();
 
                     EmailDraft draft = emailAgentService.generateDraft(msg.threadId(), currentQuestion, msg.subject());
