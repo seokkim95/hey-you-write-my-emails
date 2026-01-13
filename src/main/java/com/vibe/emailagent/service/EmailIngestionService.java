@@ -170,7 +170,17 @@ public class EmailIngestionService {
     }
 
     private String buildQuery(int lookbackHours) {
-        String base = "in:inbox -from:me";
+        // Prefer inbox + sent only.
+        // - `in:anywhere` can include trash/spam/archived/promotions you might not want.
+        // - `in:inbox OR in:sent` is a good default for an email drafting agent.
+        String base;
+
+        if (ingestionProperties.includeSent()) {
+            base = "(in:inbox OR in:sent)";
+        } else {
+            // Inbound only
+            base = "in:inbox -from:me";
+        }
 
         if (lookbackHours <= 0) {
             return base;

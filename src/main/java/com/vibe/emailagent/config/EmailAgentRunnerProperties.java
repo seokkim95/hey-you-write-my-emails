@@ -9,7 +9,8 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
  */
 @ConfigurationProperties(prefix = "emailagent.runner")
 public record EmailAgentRunnerProperties(
-        int lookbackHours
+        int lookbackHours,
+        int maxMessages
 ) {
 }
 

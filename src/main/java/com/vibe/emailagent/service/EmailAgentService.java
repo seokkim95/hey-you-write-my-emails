@@ -2,9 +2,6 @@ package com.vibe.emailagent.service;
 
 import java.util.stream.Collectors;
 
-import org.springframework.ai.chat.client.ChatClient;
-import org.springframework.ai.chat.messages.SystemMessage;
-import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -24,20 +21,17 @@ import org.springframework.transaction.annotation.Transactional;
  * 3) Output should be directly usable as a Gmail draft body.
  */
 @Service
-@Profile("automation")
+@Profile({"automation", "draft-test"})
 public class EmailAgentService {
 
-    private final EmailContextService emailContextService;
-    private final ChatClient chatClient;
+    private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(EmailAgentService.class);
 
-    /**
-     * Spring AI commonly injects {@link ChatClient.Builder} and you build a client instance.
-     * - Provider(OpenAI/Anthropic) and model options are usually configured via application.yml and auto-config.
-     * - This service focuses on prompt composition + invocation.
-     */
-    public EmailAgentService(EmailContextService emailContextService, ChatClient.Builder chatClientBuilder) {
+    private final EmailContextService emailContextService;
+    private final LlmCaller llmCaller;
+
+    public EmailAgentService(EmailContextService emailContextService, LlmCaller llmCaller) {
         this.emailContextService = emailContextService;
-        this.chatClient = chatClientBuilder.build();
+        this.llmCaller = llmCaller;
     }
 
     /**
@@ -53,17 +47,10 @@ public class EmailAgentService {
 
         PromptParts prompts = buildPrompts(ctx);
 
-        // ------------------------------
-        // ChatClient call
-        // ------------------------------
-        String body = chatClient
-                .prompt()
-                .messages(
-                        new SystemMessage(prompts.systemPrompt()),
-                        new UserMessage(prompts.userPrompt())
-                )
-                .call()
-                .content();
+        // Only the LLM/HTTP call is retried.
+        String body = llmCaller.callChatModel(prompts.systemPrompt(), prompts.userPrompt());
+
+        log.info("Generated draft for threadId={}: subject='{}' body='{}", threadId, subject, body);
 
         // Keep input subject as-is for now; if null, return empty string.
         return new EmailDraft(nullToEmpty(subject), nullToEmpty(body));
@@ -173,4 +160,28 @@ public class EmailAgentService {
         }
         return v;
     }
+
+    /**
+     * Extracts an optional user note from the currentQuestion field.
+     *
+     * Current convention
+     * - GmailDraftAutomationRunner prefixes the note with: "[User Note - Highest Priority]"
+     * - We keep this helper best-effort and non-strict.
+     */
+    private static String extractUserNote(String currentQuestion) {
+        if (currentQuestion == null) {
+            return "";
+        }
+        String normalized = currentQuestion.replace("\r\n", "\n");
+        String marker = "[User Note - Highest Priority]";
+        int idx = normalized.indexOf(marker);
+        if (idx < 0) {
+            return "";
+        }
+        String after = normalized.substring(idx + marker.length());
+        return after.strip();
+    }
+
+    // NOTE: LlmCaller is implemented as a separate @Component (see com.vibe.emailagent.service.LlmCaller)
+    // to ensure AOP proxying works.
 }

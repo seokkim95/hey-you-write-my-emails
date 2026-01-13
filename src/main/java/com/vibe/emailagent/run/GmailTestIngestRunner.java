@@ -41,11 +41,11 @@ public class GmailTestIngestRunner implements ApplicationRunner {
 
     private static final Logger log = LoggerFactory.getLogger(GmailTestIngestRunner.class);
 
-    private static final int DEFAULT_MAX_MESSAGES = 100;
+    private static final int DEFAULT_MAX_MESSAGES = 1000;
     private static final int DEFAULT_PAGE_SIZE = 20;
 
     // Chunking defaults (character-based)
-    private static final int DEFAULT_CHUNK_SIZE = 4000;
+    private static final int DEFAULT_CHUNK_SIZE = 10000;
     private static final int DEFAULT_CHUNK_OVERLAP = 200;
 
     private final GmailClient gmailClient;
@@ -81,9 +81,11 @@ public class GmailTestIngestRunner implements ApplicationRunner {
         int chunkSize = argInt(args, "gmailTestChunkSize", DEFAULT_CHUNK_SIZE);
         int chunkOverlap = argInt(args, "gmailTestChunkOverlap", DEFAULT_CHUNK_OVERLAP);
 
-        // Simple query: inbox only.
-        // You can tweak it later (e.g., in:anywhere, newer_than, label filters).
-        String query = "in:inbox";
+        boolean includeSent = !args.containsOption("gmailTestExcludeSent");
+
+        // Default: ingest inbox + sent.
+        // If you want only inbound mail, pass: --gmailTestExcludeSent=true
+        String query = includeSent ? "(in:inbox OR in:sent)" : "in:inbox -from:me";
 
         int processed = 0;
         int insertedMessage = 0;

@@ -22,6 +22,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
+import com.google.api.services.gmail.model.Thread;
 
 /**
  * GmailClient implementation backed by the official Gmail API (Google SDK).
@@ -29,9 +30,6 @@ import org.springframework.stereotype.Component;
  * Design notes
  * - OAuth is abstracted behind {@link GmailAuthProvider}.
  * - This class is the single place where we call the Google Gmail SDK.
- *
- * Current status (scaffolding)
- * - Draft creation is still a skeleton (MIME raw generation is not implemented yet).
  */
 @Component
 @ConditionalOnProperty(prefix = "gmail", name = "enabled", havingValue = "true")
@@ -64,16 +62,31 @@ public class GmailApiClient implements GmailClient {
     }
 
     @Override
-    public List<GmailMessageSummary> findUnrepliedMessagesSince(OffsetDateTime since) {
-        // Compatibility method used by earlier phases/tests; implemented via listMessages.
-        return listMessages("in:inbox -from:me", 5, null).messages();
+    public List<GmailMessageSummary> findUnrepliedMessagesSince(OffsetDateTime since, int maxMessages) {
+        // Gmail query heuristics:
+        // - in:inbox -> only inbox
+        // - after:<epochSeconds> -> time window start (seconds since Unix epoch)
+        // - -from:me -> exclude messages sent by me (helps focus on inbound messages)
+        //
+        // Notes
+        // - Gmail search supports both relative filters (newer_than:1h) and absolute (after:).
+        // - We prefer `after:` here because the caller already computed an absolute timestamp.
+        // - `-in:sent` is NOT necessary when `in:inbox` is present (sent mail is not in inbox).
+        if (since == null) {
+            // Fallback to a safe default if caller passes null.
+            since = OffsetDateTime.now(ZoneOffset.UTC).minusHours(1);
+        }
+
+        long epochSeconds = since.toEpochSecond();
+        String query = "in:inbox after:" + epochSeconds + " -from:me";
+
+        // NOTE: maxResults is intentionally small here; callers that need paging should use listMessages().
+        return listMessages(query, maxMessages, null).messages();
     }
 
     @Override
     public GmailMessagePage listMessages(String query, long maxResults, String pageToken) {
         try {
-
-
             ListMessagesResponse response = gmail.users().messages().list(USER_ID)
                     .setQ(query)
                     .setMaxResults(maxResults)
@@ -118,7 +131,6 @@ public class GmailApiClient implements GmailClient {
     @Override
     public GmailMessageContent fetchMessageContent(String messageId) {
         try {
-
             Message full = gmail.users().messages().get(USER_ID, messageId)
                     .setFormat("full")
                     .execute();
@@ -132,7 +144,9 @@ public class GmailApiClient implements GmailClient {
             }
 
             String snippet = full.getSnippet() != null ? full.getSnippet() : "";
-            String body = extractPlainText(full.getPayload());
+
+            String body = extractBestEffortPlainText(full.getPayload());
+            body = GmailTextCleaner.clean(body);
 
             return new GmailMessageContent(full.getId(), full.getThreadId(), subject, from, receivedAt, snippet, body);
         } catch (Exception e) {
@@ -140,23 +154,44 @@ public class GmailApiClient implements GmailClient {
         }
     }
 
-    private static String extractPlainText(MessagePart part) {
+    /**
+     * Best-effort extraction of a human-readable body.
+     */
+    private static String extractBestEffortPlainText(MessagePart part) {
         if (part == null) return "";
 
-        if ("text/plain".equalsIgnoreCase(part.getMimeType())) {
-            return decodeBody(part.getBody());
+        String plain = findFirstPart(part, "text/plain");
+        if (plain != null && !plain.isBlank()) {
+            return plain;
         }
 
-        if (part.getParts() != null) {
-            for (MessagePart p : part.getParts()) {
-                String text = extractPlainText(p);
-                if (!text.isBlank()) {
-                    return text;
-                }
-            }
+        String html = findFirstPart(part, "text/html");
+        if (html != null && !html.isBlank()) {
+            return GmailTextCleaner.clean(html);
         }
 
         return decodeBody(part.getBody());
+    }
+
+    private static String findFirstPart(MessagePart part, String mimeType) {
+        if (part == null) return null;
+
+        if (mimeType.equalsIgnoreCase(part.getMimeType())) {
+            return decodeBody(part.getBody());
+        }
+
+        if (part.getParts() == null || part.getParts().isEmpty()) {
+            return null;
+        }
+
+        for (MessagePart p : part.getParts()) {
+            String found = findFirstPart(p, mimeType);
+            if (found != null && !found.isBlank()) {
+                return found;
+            }
+        }
+
+        return null;
     }
 
     private static String decodeBody(MessagePartBody body) {
@@ -181,15 +216,76 @@ public class GmailApiClient implements GmailClient {
     @Override
     public String createReplyDraft(String messageId, String threadId, String subject, String draftBody) {
         try {
-            Gmail gmail = gmail();
+            // NOTE: Still a skeleton.
+            // Proper reply drafting requires building a raw RFC822 message with In-Reply-To/References.
+            // For now, we create a plain text draft.
+            Message message = new Message();
+            message.setThreadId(threadId);
+
+            String raw = "Subject: " + (subject == null ? "" : subject) + "\r\n" +
+                    "Content-Type: text/plain; charset=\"UTF-8\"\r\n" +
+                    "\r\n" +
+                    (draftBody == null ? "" : draftBody);
+
+            String encoded = Base64.getUrlEncoder().encodeToString(raw.getBytes(StandardCharsets.UTF_8));
+            message.setRaw(encoded);
+
             Draft draft = new Draft();
+            draft.setMessage(message);
+
             Draft created = gmail.users().drafts().create(USER_ID, draft).execute();
             return created.getId();
         } catch (Exception e) {
-            log.warn("Failed to create Gmail draft (skeleton): {}", e.getMessage(), e);
+            log.warn("Failed to create Gmail draft: {}", e.getMessage(), e);
             throw new IllegalStateException("Failed to create Gmail draft", e);
         }
     }
+
+    @Override
+    public List<GmailMessageContent> fetchThreadMessages(String threadId) {
+        try {
+            Thread thread = gmail.users().threads().get(USER_ID, threadId)
+                    // 'full' gives payload parts and internalDate
+                    .setFormat("full")
+                    .execute();
+
+            if (thread.getMessages() == null || thread.getMessages().isEmpty()) {
+                return List.of();
+            }
+
+            return thread.getMessages().stream()
+                    .map(m -> {
+                        try {
+                            String subject = headerValue(m.getPayload() != null ? m.getPayload().getHeaders() : null, "Subject");
+                            String from = headerValue(m.getPayload() != null ? m.getPayload().getHeaders() : null, "From");
+
+                            OffsetDateTime receivedAt = null;
+                            if (m.getInternalDate() != null) {
+                                receivedAt = OffsetDateTime.ofInstant(Instant.ofEpochMilli(m.getInternalDate()), ZoneOffset.UTC);
+                            }
+
+                            String snippet = m.getSnippet() != null ? m.getSnippet() : "";
+                            String body = extractBestEffortPlainText(m.getPayload());
+                            body = GmailTextCleaner.clean(body);
+
+                            return new GmailMessageContent(m.getId(), m.getThreadId(), subject, from, receivedAt, snippet, body);
+                        } catch (Exception e) {
+                            // Best effort fallback: keep at least IDs/snippet
+                            OffsetDateTime receivedAt = null;
+                            if (m.getInternalDate() != null) {
+                                receivedAt = OffsetDateTime.ofInstant(Instant.ofEpochMilli(m.getInternalDate()), ZoneOffset.UTC);
+                            }
+                            return new GmailMessageContent(m.getId(), m.getThreadId(), "", "", receivedAt, m.getSnippet(), "");
+                        }
+                    })
+                    .toList();
+        } catch (Exception e) {
+            throw new IllegalStateException("Failed to fetch thread messages for threadId=" + threadId, e);
+        }
+    }
+
+    // NOTE: write-draft trigger based automation was removed.
+    // Any draft-search/update methods were intentionally deleted.
 
     private Gmail gmail() throws Exception {
         NetHttpTransport transport = GoogleNetHttpTransport.newTrustedTransport();

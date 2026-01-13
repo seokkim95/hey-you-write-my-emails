@@ -13,34 +13,35 @@ import java.util.List;
 public interface GmailClient {
 
     /**
-     * Returns candidate messages that arrived since the given timestamp.
+     * Returns candidate inbound messages since 'since'.
      *
-     * NOTE: This method is currently a placeholder/skeleton.
+     * Contract
+     * - Result can contain multiple messages from the same thread.
+     * - Caller may want to de-duplicate by thread and only draft for the latest message.
      */
-    List<GmailMessageSummary> findUnrepliedMessagesSince(OffsetDateTime since);
+    List<GmailMessageSummary> findUnrepliedMessagesSince(OffsetDateTime since, int maxMessages);
+
+    /**
+     * Fetches message content (plain text).
+     */
+    GmailMessageContent fetchMessageContent(String messageId);
+
+    /**
+     * Fetches all messages for a thread.
+     *
+     * Notes
+     * - Gmail API returns messages in no guaranteed order.
+     * - Caller should sort by receivedAt/internalDate.
+     */
+    List<GmailMessageContent> fetchThreadMessages(String threadId);
 
     /**
      * Creates a reply draft in the user's Gmail drafts.
-     *
-     * @param messageId original message id
-     * @param threadId original thread id
-     * @param subject draft subject
-     * @param draftBody draft body (plain text)
-     * @return created draft id
      */
     String createReplyDraft(String messageId, String threadId, String subject, String draftBody);
 
     /**
      * Batch/ingestion API: lists messages using a Gmail search query.
-     *
-     * @param query Gmail search query (e.g., "in:inbox -from:me")
-     * @param maxResults maximum number of results for this page
-     * @param pageToken next page token (optional)
      */
     GmailMessagePage listMessages(String query, long maxResults, String pageToken);
-
-    /**
-     * Fetches message content (plain text) for ingestion.
-     */
-    GmailMessageContent fetchMessageContent(String messageId);
 }

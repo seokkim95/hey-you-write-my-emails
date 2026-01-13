@@ -54,6 +54,9 @@ spring:
       # chat:
       #   options:
       #     model: gpt-4o-mini
+      chat:
+        options:
+          model: ${OPENAI_CHAT_MODEL:gpt-4o-mini}
 
 
     # 2) Claude (Anthropic) - Will be used later if I decide to use anthropic models to generate email content.
@@ -106,5 +109,8 @@ emailagent:
     # Chunking (to avoid embedding token limits)
     # - chunk-size: max characters per document chunk
     # - chunk-overlap: overlap between chunks
-    chunk-size: ${EMAILAGENT_INGESTION_CHUNK_SIZE:4000}
-    chunk-overlap: ${EMAILAGENT_INGESTION_CHUNK_OVERLAP:200}
+    chunk-size: ${EMAILAGENT_INGESTION_CHUNK_SIZE:10000}
+    chunk-overlap: ${EMAILAGENT_INGESTION_CHUNK_OVERLAP:300}
+
+    # Include sent emails by default
+    include-sent: ${EMAILAGENT_INGESTION_INCLUDE_SENT:true}

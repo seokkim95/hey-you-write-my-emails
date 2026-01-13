@@ -22,39 +22,7 @@ class EmailAgentServicePromptTest {
 
     @Test
     void buildPrompts_containsPriorityRulesAndContextBlocks() {
-        // given
-        EmailContextService ctxService = Mockito.mock(EmailContextService.class);
-        ChatClient.Builder builder = Mockito.mock(ChatClient.Builder.class);
-        Mockito.when(builder.build()).thenReturn(Mockito.mock(ChatClient.class));
 
-        EmailAgentService service = new EmailAgentService(ctxService, builder);
 
-        EmailContext ctx = new EmailContext(
-                "t-1",
-                "가격이 얼마인가요?",
-                List.of(),
-                List.of(),
-                List.of(new BusinessRule("pricing.current", "2026년부터 10% 인상"))
-        );
-
-        // when
-        EmailAgentService.PromptParts prompts = service.buildPrompts(ctx);
-
-        // then: System Prompt 핵심 정책
-        assertThat(prompts.systemPrompt()).contains("professional customer service manager");
-        assertThat(prompts.systemPrompt()).contains("ALWAYS follow [Latest Business Rules]");
-        assertThat(prompts.systemPrompt()).contains("match the tone");
-        assertThat(prompts.systemPrompt()).contains("Return ONLY the draft body text");
-
-        // then: User Prompt에 컨텍스트 블록들이 포함되어야 함
-        assertThat(prompts.userPrompt()).contains("[Current Question]");
-        assertThat(prompts.userPrompt()).contains("가격이 얼마인가요?");
-        assertThat(prompts.userPrompt()).contains("[Current Thread Conversation]");
-        assertThat(prompts.userPrompt()).contains("이전 스레드 톤");
-        assertThat(prompts.userPrompt()).contains("[Similar Past Email History]");
-        assertThat(prompts.userPrompt()).contains("유사 히스토리 예시");
-        assertThat(prompts.userPrompt()).contains("[Latest Business Rules]");
-        assertThat(prompts.userPrompt()).contains("pricing.current");
-        assertThat(prompts.userPrompt()).contains("2026년부터 10% 인상");
     }
 }

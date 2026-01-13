@@ -18,8 +18,14 @@
 
     <properties>
         <java.version>17</java.version>
-        <!-- Flyway: explicitly override to support PostgreSQL 17.x -->
-        <flyway.version>10.17.3</flyway.version>
+        <!-- Flyway: keep Maven plugin and runtime database module on the same major version -->
+        <flyway.version>11.7.1</flyway.version>
+
+        <!-- Defaults for flyway-maven-plugin (override via -Dflyway.* at runtime) -->
+        <flyway.url></flyway.url>
+        <flyway.user></flyway.user>
+        <flyway.password></flyway.password>
+
         <!-- Spring AI: Milestone 저장소에서 해석 가능한 버전 라인 사용 -->
         <spring-ai.version>1.0.0-M6</spring-ai.version>
         <testcontainers.version>1.20.4</testcontainers.version>
@@ -98,10 +104,10 @@
             <groupId>org.springframework.ai</groupId>
             <artifactId>spring-ai-openai-spring-boot-starter</artifactId>
         </dependency>
-        <dependency>
-            <groupId>org.springframework.ai</groupId>
-            <artifactId>spring-ai-anthropic-spring-boot-starter</artifactId>
-        </dependency>
+<!--        <dependency>-->
+<!--            <groupId>org.springframework.ai</groupId>-->
+<!--            <artifactId>spring-ai-anthropic-spring-boot-starter</artifactId>-->
+<!--        </dependency>-->
         <dependency>
             <groupId>org.springframework.ai</groupId>
             <artifactId>spring-ai-pgvector-store-spring-boot-starter</artifactId>
@@ -153,6 +159,12 @@
             <artifactId>postgresql</artifactId>
             <scope>test</scope>
         </dependency>
+
+        <!-- AOP (for @ExponentialRetry) -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-aop</artifactId>
+        </dependency>
     </dependencies>
 
     <build>
@@ -179,6 +191,28 @@
                             <artifactId>lombok</artifactId>
                         </exclude>
                     </excludes>
+                </configuration>
+            </plugin>
+
+            <!-- Flyway Maven Plugin (for CLI-style DB operations like flyway:clean/migrate) -->
+            <plugin>
+                <groupId>org.flywaydb</groupId>
+                <artifactId>flyway-maven-plugin</artifactId>
+                <version>${flyway.version}</version>
+                <configuration>
+                    <!--
+                      NOTE:
+                      - flyway-maven-plugin does NOT read Spring Boot's application*.yml automatically.
+                      - You must provide connection info here or via -Dflyway.* properties.
+                      - For Neon/Postgres SSL is typically required (sslmode=require).
+                    -->
+                    <url>${flyway.url}</url>
+                    <user>${flyway.user}</user>
+                    <password>${flyway.password}</password>
+                    <locations>
+                        <location>filesystem:${project.basedir}/src/main/resources/db/migration</location>
+                    </locations>
+                    <cleanDisabled>false</cleanDisabled>
                 </configuration>
             </plugin>
         </plugins>

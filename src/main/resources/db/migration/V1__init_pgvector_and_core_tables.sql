@@ -19,21 +19,30 @@ CREATE TABLE IF NOT EXISTS email_embeddings (
     -- VectorStore document id.
     -- Spring AI PgVectorStore (1.0.0-M6) treats ids as UUIDs by default.
     id UUID PRIMARY KEY,
-    thread_id TEXT,
-    sender TEXT,
-    recipients TEXT,
-    subject TEXT,
-    content TEXT,
-    created_at TIMESTAMPTZ DEFAULT now(),
-    metadata JSONB,
-    embedding vector(1536)
-);
 
--- Thread reconstruction
-CREATE INDEX IF NOT EXISTS email_embeddings_thread_id_idx ON email_embeddings(thread_id);
+    -- Chunk text content used for embeddings and prompt context.
+    content TEXT,
+
+    -- Flexible metadata for Gmail fields (messageId, threadId, subject, from, labels, etc.)
+    metadata JSONB,
+
+    -- Vector embedding (must match spring.ai.vectorstore.pgvector.dimensions)
+    embedding vector(1536),
+
+    -- Ingestion timestamp (server-side)
+    created_at TIMESTAMPTZ DEFAULT now()
+);
 
 -- Useful for recent-first queries
 CREATE INDEX IF NOT EXISTS email_embeddings_created_at_idx ON email_embeddings(created_at DESC);
+
+-- Fast thread reconstruction via metadata
+CREATE INDEX IF NOT EXISTS email_embeddings_thread_id_idx
+    ON email_embeddings ((metadata ->> 'thread_id'));
+
+-- Optional: faster de-dup by Gmail message id from metadata
+CREATE INDEX IF NOT EXISTS email_embeddings_message_id_idx
+    ON email_embeddings ((metadata ->> 'message_id'));
 
 -- =========================
 -- Latest business rules

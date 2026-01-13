@@ -4,6 +4,7 @@ import java.time.OffsetDateTime;
 import java.util.Collections;
 import java.util.List;
 
+import org.slf4j.Logger;
 import org.springframework.ai.vectorstore.VectorStore;
 import org.springframework.context.annotation.Profile;
 import org.springframework.jdbc.core.simple.JdbcClient;
@@ -21,8 +22,10 @@ import com.vibe.emailagent.repository.BusinessRuleRepository;
  * - Similarity search is performed via Spring AI VectorStore (pgvector).
  */
 @Service
-@Profile("automation")
+@Profile({"automation", "draft-test"})
 public class EmailContextService {
+
+    private static final Logger log = org.slf4j.LoggerFactory.getLogger(EmailContextService.class);
 
     private final BusinessRuleRepository businessRuleRepository;
     private final VectorStore vectorStore;
@@ -49,7 +52,7 @@ public class EmailContextService {
      * Deterministically reconstructs a thread from email_embeddings.
      */
     List<EmailMessage> loadThreadConversation(String threadId) {
-        return jdbcClient.sql("""
+        List<EmailMessage> emailsInThread = jdbcClient.sql("""
                         SELECT
                           id,
                           created_at,
@@ -83,6 +86,10 @@ public class EmailContextService {
                     );
                 })
                 .list();
+
+        log.info("Loaded {} emails in thread {}", emailsInThread.size(), threadId);
+
+        return emailsInThread;
     }
 
     List<EmailMessage> loadSimilarHistory(String query) {
@@ -91,7 +98,7 @@ public class EmailContextService {
             docs = Collections.emptyList();
         }
 
-        return docs.stream()
+        List<EmailMessage> similarHistories = docs.stream()
                 .map(d -> new EmailMessage(
                         d.getId(),
                         (String) d.getMetadata().getOrDefault("thread_id", ""),
@@ -103,5 +110,10 @@ public class EmailContextService {
                         d.getMetadata()
                 ))
                 .toList();
+
+        log.info("Loaded {} similar history.", similarHistories.size());
+
+        return similarHistories;
+
     }
 }
